@@ -28,7 +28,7 @@ __all__ = ['ConvolvedSersic2D', 'SourceMorphology', 'source_morphology',
 __version__ = '0.4.0'
 
 # A list of all the quantities that are calculated by SourceMorphology:
-_quantity_names = [
+_quantity_names_all = [
     'xc_centroid',
     'yc_centroid',
     'ellipticity_centroid',
@@ -81,6 +81,53 @@ _quantity_names = [
     'ny_stamp',
 ]
 
+_quantity_names_nofit = [
+    'xc_centroid',
+    'yc_centroid',
+    'ellipticity_centroid',
+    'elongation_centroid',
+    'orientation_centroid',
+    'xc_asymmetry',
+    'yc_asymmetry',
+    'ellipticity_asymmetry',
+    'elongation_asymmetry',
+    'orientation_asymmetry',
+    'flux_circ',
+    'flux_ellip',
+    'rpetro_circ',
+    'rpetro_ellip',
+    'rmax_circ',
+    'rmax_ellip',
+    'rhalf_circ',
+    'rhalf_ellip',
+    'r20',
+    'r50',
+    'r80',
+    'gini',
+    'm20',
+    'gini_m20_bulge',
+    'gini_m20_merger',
+    'sn_per_pixel',
+    'concentration',
+    'asymmetry',
+    'smoothness',
+    'multimode',
+    'intensity',
+    'deviation',
+    'outer_asymmetry',
+    'shape_asymmetry',
+    'sky_mean',
+    'sky_median',
+    'sky_sigma',
+    'xmin_stamp',
+    'ymin_stamp',
+    'xmax_stamp',
+    'ymax_stamp',
+    'nx_stamp',
+    'ny_stamp',
+]
+
+
 def _quantile(sorted_values, q):
     """
     For a sorted (in increasing order) 1-d array, return the value
@@ -95,12 +142,14 @@ def _quantile(sorted_values, q):
         raise ValueError('Quantiles must be in the range [0, 1].')
     return sorted_values[int(q*(len(sorted_values)-1))]
 
+
 def _aperture_area(ap, mask, **kwargs):
     """
     Calculate the area of a photutils aperture object,
     excluding masked pixels.
     """
     return ap.do_photometry(np.float64(~mask), **kwargs)[0][0]
+
 
 def _aperture_mean_nomask(ap, image, **kwargs):
     """
@@ -112,6 +161,7 @@ def _aperture_mean_nomask(ap, image, **kwargs):
     region of interest.
     """
     return ap.do_photometry(image, **kwargs)[0][0] / ap.area
+
 
 def _fraction_of_total_function_circ(r, image, center, fraction, total_sum):
     """
@@ -128,6 +178,7 @@ def _fraction_of_total_function_circ(r, image, center, fraction, total_sum):
 
     return cur_fraction - fraction
 
+
 def _radius_at_fraction_of_total_circ(image, center, r_total, fraction):
     """
     Return the radius (in pixels) of a concentric circle that
@@ -140,7 +191,8 @@ def _radius_at_fraction_of_total_circ(image, center, r_total, fraction):
     total_sum = ap_total.do_photometry(image, method='exact')[0][0]
     assert total_sum != 0
     if total_sum < 0:
-        warnings.warn('[r_circ] Total flux sum is negative.', AstropyUserWarning)
+        warnings.warn('[r_circ] Total flux sum is negative.',
+                      AstropyUserWarning)
         flag = 1
         total_sum = np.abs(total_sum)
 
@@ -165,6 +217,7 @@ def _radius_at_fraction_of_total_circ(image, center, r_total, fraction):
 
     return r, flag
 
+
 def _fraction_of_total_function_ellip(a, image, center, elongation, theta,
                                       fraction, total_sum):
     """
@@ -182,6 +235,7 @@ def _fraction_of_total_function_ellip(a, image, center, elongation, theta,
 
     return cur_fraction - fraction
 
+
 def _radius_at_fraction_of_total_ellip(image, center, elongation, theta,
                                        a_total, fraction):
     """
@@ -198,7 +252,8 @@ def _radius_at_fraction_of_total_ellip(image, center, elongation, theta,
     total_sum = ap_total.do_photometry(image, method='exact')[0][0]
     assert total_sum != 0
     if total_sum < 0:
-        warnings.warn('[r_ellip] Total flux sum is negative.', AstropyUserWarning)
+        warnings.warn('[r_ellip] Total flux sum is negative.',
+                      AstropyUserWarning)
         flag = 1
         total_sum = np.abs(total_sum)
 
@@ -219,10 +274,12 @@ def _radius_at_fraction_of_total_ellip(image, center, elongation, theta,
         i += 1
 
     a = opt.brentq(_fraction_of_total_function_ellip, a_min, a_max,
-                   args=(image, center, elongation, theta, fraction, total_sum),
+                   args=(image, center, elongation,
+                         theta, fraction, total_sum),
                    xtol=1e-6)
 
     return a, flag
+
 
 class ConvolvedSersic2D(models.Sersic2D):
     """
@@ -256,6 +313,7 @@ class ConvolvedSersic2D(models.Sersic2D):
         # Apparently, scipy.signal also wants double:
         return scipy.signal.fftconvolve(
             np.float64(z_sersic), np.float64(cls.psf), mode='same')
+
 
 class SourceMorphology(object):
     """
@@ -371,6 +429,7 @@ class SourceMorphology(object):
     See `README.rst` for a list of references.
 
     """
+
     def __init__(self, image, segmap, label, mask=None, weightmap=None,
                  gain=None, psf=None, cutout_extent=1.5, min_cutout_size=48,
                  n_sigma_outlier=10, annulus_width=1.0,
@@ -378,7 +437,8 @@ class SourceMorphology(object):
                  petro_extent_cas=1.5, petro_fraction_cas=0.25,
                  boxcar_size_mid=3.0, niter_bh_mid=5, sigma_mid=1.0,
                  petro_extent_flux=2.0, boxcar_size_shape_asym=3.0,
-                 sersic_maxiter=500, segmap_overlap_ratio=0.25, verbose=False):
+                 sersic_maxiter=500, segmap_overlap_ratio=0.25, no_fit=False,
+                 verbose=False):
         self._image = image
         self._segmap = segmap
         self.label = label
@@ -402,6 +462,7 @@ class SourceMorphology(object):
         self._boxcar_size_shape_asym = boxcar_size_shape_asym
         self._sersic_maxiter = sersic_maxiter
         self._segmap_overlap_ratio = segmap_overlap_ratio
+        self._nofit = no_fit
         self._verbose = verbose
 
         # Measure runtime
@@ -456,7 +517,8 @@ class SourceMorphology(object):
 
         # Position of the source's brightest pixel relative to the stamp cutout:
         maxval = np.max(self._cutout_stamp_maskzeroed_no_bg)
-        maxval_stamp_pos = np.argwhere(self._cutout_stamp_maskzeroed_no_bg == maxval)[0]
+        maxval_stamp_pos = np.argwhere(
+            self._cutout_stamp_maskzeroed_no_bg == maxval)[0]
         self._x_maxval_stamp = maxval_stamp_pos[1]
         self._y_maxval_stamp = maxval_stamp_pos[0]
 
@@ -470,7 +532,8 @@ class SourceMorphology(object):
 
         # Check if image is background-subtracted; set flag=1 if not.
         if np.abs(self.sky_mean) > self.sky_sigma:
-            warnings.warn('Image is not background-subtracted.', AstropyUserWarning)
+            warnings.warn('Image is not background-subtracted.',
+                          AstropyUserWarning)
             self.flag = 1
 
         # Check segmaps and set flag=1 if they are very different
@@ -506,8 +569,8 @@ class SourceMorphology(object):
         local_std = np.sqrt(local_mean2 - local_mean**2)
 
         # Get "bad pixels"
-        badpixels = (np.abs(image - local_mean) >
-                     self._n_sigma_outlier * local_std)
+        badpixels = (np.abs(image - local_mean)
+                     > self._n_sigma_outlier * local_std)
 
         return badpixels
 
@@ -532,6 +595,11 @@ class SourceMorphology(object):
         Calculate all morphological parameters, which are stored
         as "lazy" properties.
         """
+        if self._nofit:
+            _quantity_names = _quantity_names_nofit
+        else:
+            _quantity_names = _quantity_names_all
+
         for q in _quantity_names:
             tmp = self[q]
 
@@ -542,8 +610,8 @@ class SourceMorphology(object):
         """
         area_max = max(np.sum(self._segmap_gini),
                        np.sum(self._segmap_mid))
-        area_overlap = np.sum(self._segmap_gini &
-                              self._segmap_mid)
+        area_overlap = np.sum(self._segmap_gini
+                              & self._segmap_mid)
         if area_max == 0:
             warnings.warn('Segmaps are empty!', AstropyUserWarning)
             self.flag = 1
@@ -561,7 +629,8 @@ class SourceMorphology(object):
         The (yc, xc) centroid of the input segment, relative to
         ``_slice_stamp``.
         """
-        image = np.float64(self._cutout_stamp_maskzeroed_no_bg)  # skimage wants double
+        image = np.float64(
+            self._cutout_stamp_maskzeroed_no_bg)  # skimage wants double
 
         # Calculate centroid
         M = skimage.measure.moments(image, order=1)
@@ -571,8 +640,8 @@ class SourceMorphology(object):
 
         ny, nx = self._cutout_stamp_maskzeroed_no_bg.shape
         if (yc < 0) or (yc >= ny) or (xc < 0) or (xc >= nx):
-            warnings.warn('Centroid is out-of-range. Fixing at center of ' +
-                          'postage stamp (bad!).', AstropyUserWarning)
+            warnings.warn('Centroid is out-of-range. Fixing at center of '
+                          + 'postage stamp (bad!).', AstropyUserWarning)
             yc = ny / 2.0
             xc = nx / 2.0
             self.flag = 1
@@ -624,7 +693,8 @@ class SourceMorphology(object):
         rho = 1.0 / 12.0  # variance of 1 pixel-wide top-hat distribution
         x2, xy, xy, y2 = covariance.flat
         while np.abs(x2*y2 - xy**2) < rho**2:
-            x2 += (x2 >= 0) * rho - (x2 < 0) * rho  # np.sign(0) == 0 is no good
+            x2 += (x2 >= 0) * rho - (x2 < 0) * \
+                   rho  # np.sign(0) == 0 is no good
             y2 += (y2 >= 0) * rho - (y2 < 0) * rho
         covariance = np.array([[x2, xy],
                                [xy, y2]])
@@ -638,7 +708,8 @@ class SourceMorphology(object):
         semiminor axes. Note that we allow negative eigenvalues.
         """
         eigvals = np.linalg.eigvals(covariance)
-        eigvals = np.sort(np.abs(eigvals))[::-1]  # largest first (by abs. value)
+        # largest first (by abs. value)
+        eigvals = np.sort(np.abs(eigvals))[::-1]
 
         # We deal with negative eigenvalues, but we indicate that something
         # is not OK with the data (eigenvalues cannot be exactly zero after
@@ -940,7 +1011,8 @@ class SourceMorphology(object):
             circ_aperture, image, method='exact'))
 
         if circ_aperture_mean_flux == 0:
-            warnings.warn('[rpetro_circ] Mean flux is zero.', AstropyUserWarning)
+            warnings.warn('[rpetro_circ] Mean flux is zero.',
+                          AstropyUserWarning)
             # If flux within annulus is also zero (e.g. beyond the image
             # boundaries), return zero. Otherwise return 1.0:
             ratio = float(circ_annulus_mean_flux != 0)
@@ -989,8 +1061,8 @@ class SourceMorphology(object):
                     if r >= r_outer:
                         # If r_min is still undefined at this point, then
                         # rpetro must be smaller than the annulus width.
-                        warnings.warn('rpetro_circ < annulus_width! ' +
-                                      'Setting rpetro_circ = annulus_width.',
+                        warnings.warn('rpetro_circ < annulus_width! '
+                                      + 'Setting rpetro_circ = annulus_width.',
                                       AstropyUserWarning)
                         return r_inner
                 else:
@@ -1066,7 +1138,8 @@ class SourceMorphology(object):
             ellip_aperture, image, method='exact'))
 
         if ellip_aperture_mean_flux == 0:
-            warnings.warn('[rpetro_ellip] Mean flux is zero.', AstropyUserWarning)
+            warnings.warn('[rpetro_ellip] Mean flux is zero.',
+                          AstropyUserWarning)
             # If flux within annulus is also zero (e.g. beyond the image
             # boundaries), return zero. Otherwise return 1.0:
             ratio = float(ellip_annulus_mean_flux != 0)
@@ -1105,7 +1178,8 @@ class SourceMorphology(object):
                 warnings.warn('[rpetro_ellip] rpetro larger than cutout.',
                               AstropyUserWarning)
                 self.flag = 1
-            curval = self._petrosian_function_ellip(a, center, elongation, theta)
+            curval = self._petrosian_function_ellip(
+                a, center, elongation, theta)
             if curval >= 0:
                 a_min = a
             elif curval < 0:
@@ -1116,8 +1190,8 @@ class SourceMorphology(object):
                     if a >= a_outer:
                         # If a_min is still undefined at this point, then
                         # rpetro must be smaller than the annulus width.
-                        warnings.warn('rpetro_ellip < annulus_width! ' +
-                                      'Setting rpetro_ellip = annulus_width.',
+                        warnings.warn('rpetro_ellip < annulus_width! '
+                                      + 'Setting rpetro_ellip = annulus_width.',
                                       AstropyUserWarning)
                         return a_inner
                 else:
@@ -1169,7 +1243,8 @@ class SourceMorphology(object):
         """
         # Smooth image
         petro_sigma = self._petro_fraction_gini * self.rpetro_ellip
-        cutout_smooth = ndi.gaussian_filter(self._cutout_stamp_maskzeroed, petro_sigma)
+        cutout_smooth = ndi.gaussian_filter(
+            self._cutout_stamp_maskzeroed, petro_sigma)
 
         # Use mean flux at the Petrosian "radius" as threshold
         a_in = self.rpetro_ellip - 0.5 * self._annulus_width
@@ -1235,8 +1310,8 @@ class SourceMorphology(object):
             return -99.0  # invalid
 
         indices = np.arange(1, n+1)  # start at i=1
-        gini = (np.sum((2*indices-n-1) * sorted_pixelvals) /
-                (float(n-1) * np.sum(sorted_pixelvals)))
+        gini = (np.sum((2*indices-n-1) * sorted_pixelvals)
+                / (float(n-1) * np.sum(sorted_pixelvals)))
 
         return gini
 
@@ -1280,7 +1355,8 @@ class SourceMorphology(object):
 
         # Calculate second moment of the brightest pixels
         image_20 = np.where(image >= threshold, image, 0.0)
-        Mc_20 = skimage.measure.moments_central(image_20, center=(yc, xc), order=2)
+        Mc_20 = skimage.measure.moments_central(
+            image_20, center=(yc, xc), order=2)
         second_moment_20 = Mc_20[0, 2] + Mc_20[2, 0]
 
         if (second_moment_20 <= 0) | (second_moment_tot <= 0):
@@ -1349,8 +1425,8 @@ class SourceMorphology(object):
                           AstropyUserWarning)
             weightmap = np.abs(weightmap)
 
-        locs = (self._segmap_gini & (self._cutout_stamp_maskzeroed >= 0) &
-                (weightmap > 0))
+        locs = (self._segmap_gini & (self._cutout_stamp_maskzeroed >= 0)
+                & (weightmap > 0))
         if np.sum(locs) == 0:
             warnings.warn('Invalid sn_per_pixel.', AstropyUserWarning)
             self.flag = 1
@@ -1526,7 +1602,8 @@ class SourceMorphology(object):
             b_out = a_out / self.elongation_asymmetry
             theta = self.orientation_asymmetry
             assert (a_in > 0) & (a_out > 0)
-            ap = photutils.EllipticalAnnulus(center, a_in, a_out, b_out, theta=theta)
+            ap = photutils.EllipticalAnnulus(
+                center, a_in, a_out, b_out, theta=theta)
         elif kind == 'shape':
             if np.isnan(self.rmax_circ) or (self.rmax_circ <= 0):
                 warnings.warn('[shape_asym] Invalid rmax_circ value.',
@@ -1539,7 +1616,8 @@ class SourceMorphology(object):
 
         # Apply eq. 10 from Lotz et al. (2004)
         ap_abs_sum = ap.do_photometry(np.abs(image), method='exact')[0][0]
-        ap_abs_diff = ap.do_photometry(np.abs(image_180-image), method='exact')[0][0]
+        ap_abs_diff = ap.do_photometry(
+            np.abs(image_180-image), method='exact')[0][0]
 
         if ap_abs_sum == 0.0:
             warnings.warn('[asymmetry_function] Zero flux sum.',
@@ -1665,7 +1743,8 @@ class SourceMorphology(object):
         center = self._asymmetry_center
         r_upper = self._petro_extent_cas * self.rpetro_circ
 
-        r, flag = _radius_at_fraction_of_total_circ(image, center, r_upper, fraction)
+        r, flag = _radius_at_fraction_of_total_circ(
+            image, center, r_upper, fraction)
         self.flag = max(self.flag, flag)
 
         if np.isnan(r) or (r <= 0.0):
@@ -1763,7 +1842,8 @@ class SourceMorphology(object):
         the locations of pixels above ``q`` (within the original segment)
         that are also part of the "main" clump.
         """
-        threshold = _quantile(self._sorted_pixelvals_stamp_no_bg_nonnegative, q)
+        threshold = _quantile(
+            self._sorted_pixelvals_stamp_no_bg_nonnegative, q)
         above_threshold = self._cutout_stamp_maskzeroed_no_bg_nonnegative >= threshold
 
         # Instead of assuming that the main segment is at the center
@@ -1911,7 +1991,8 @@ class SourceMorphology(object):
             if len(sorted_counts) == 1:
                 ratio = invalid
             else:
-                ratio = -1.0 * float(sorted_counts[1])**2 / float(sorted_counts[0])
+                ratio = -1.0 * \
+                    float(sorted_counts[1])**2 / float(sorted_counts[0])
 
         return ratio
 
@@ -1991,7 +2072,8 @@ class SourceMorphology(object):
 
         temperature = -1.0 * mid_bh_rel_temp * ratio_min
         res = opt.basinhopping(
-            self._multimode_ratio, q0, minimizer_kwargs={"method": "Nelder-Mead"},
+            self._multimode_ratio, q0, minimizer_kwargs={
+                "method": "Nelder-Mead"},
             niter=self._niter_bh_mid, T=temperature, stepsize=mid_stepsize,
             interval=self._niter_bh_mid/2, disp=False, seed=0)
         q_final = res.x[0]
@@ -2080,7 +2162,8 @@ class SourceMorphology(object):
 
         sorted_flux_sums, sorted_xpeak, sorted_ypeak = self._intensity_sums
         if len(sorted_flux_sums) == 0:
-            warnings.warn('[deviation] There are no peaks.', AstropyUserWarning)
+            warnings.warn('[deviation] There are no peaks.',
+                          AstropyUserWarning)
             self.flag = 1
             return -99.0  # invalid
 
@@ -2344,7 +2427,8 @@ class SourceMorphology(object):
         ellip_annulus_mean_flux = _aperture_mean_nomask(
             ellip_annulus, image, method='exact')
         if ellip_annulus_mean_flux <= 0.0:
-            warnings.warn('[sersic] Nonpositive flux at r_e.', AstropyUserWarning)
+            warnings.warn('[sersic] Nonpositive flux at r_e.',
+                          AstropyUserWarning)
             self.flag_sersic = 1
             ellip_annulus_mean_flux = np.abs(ellip_annulus_mean_flux)
 
