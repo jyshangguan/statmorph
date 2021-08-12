@@ -491,6 +491,16 @@ class SourceMorphology(object):
         self.flag = 0  # attempts to flag bad measurements
         self.flag_sersic = 0  # attempts to flag bad Sersic fits
         self.flag_catastrophic = 0  # this one is reserved for really bad cases
+        # attempts to flag the ones with center pixel masked.
+        self.flag_maskcenter = 0
+
+        # Initial input:
+        self.asym_sky_cas = -999
+        self.asym_sky_outer = -999
+        self.asym_sky_shape = -999
+        self.frac_mask_cas = -999
+        self.frac_mask_out = -999
+        self.frac_mask_shape = -999
 
         # If something goes wrong, use centroid instead of asymmetry center
         # (better performance in some pathological cases, e.g. GOODS-S 32143):
@@ -581,6 +591,11 @@ class SourceMorphology(object):
         deal with these cases by creating an "empty" object and
         interrupting the constructor.
         """
+        if self._nofit:
+            _quantity_names = _quantity_names_nofit
+        else:
+            _quantity_names = _quantity_names_all
+
         for q in _quantity_names:
             setattr(self, q, -99.0)
         self.nx_stamp = -99
@@ -1592,10 +1607,19 @@ class SourceMorphology(object):
         image = np.where(~mask_symmetric, image, 0.0)
         image_180 = np.where(~mask_symmetric, image_180, 0.0)
 
+        if image[int(yc), int(xc)] == 0.0:
+            self.flag_maskcenter = 1
+        # Fraction of target pixels been masked
+
         # Create aperture for the chosen kind of asymmetry
         if kind == 'cas':
             r = self._petro_extent_cas * self._rpetro_circ_centroid
             ap = photutils.CircularAperture(center, r)
+            ap_cas_region = ap.to_mask(method='center')
+            ap_cas_region = ap_cas_region.to_image((ny, nx))
+            ap_cas_overlap = np.logical_and(mask_symmetric, ap_cas_region)
+            frac_mask_cas = np.sum(ap_cas_overlap)/np.sum(ap_cas_region)
+            self.frac_mask_cas = frac_mask_cas
         elif kind == 'outer':
             a_in = self.rhalf_ellip
             a_out = self.rmax_ellip
@@ -1604,6 +1628,11 @@ class SourceMorphology(object):
             assert (a_in > 0) & (a_out > 0)
             ap = photutils.EllipticalAnnulus(
                 center, a_in, a_out, b_out, theta=theta)
+            ap_out_region = ap.to_mask(method='center')
+            ap_out_region = ap_out_region.to_image((ny, nx))
+            ap_out_overlap = np.logical_and(mask_symmetric, ap_out_region)
+            frac_mask_out = np.sum(ap_out_overlap)/np.sum(ap_out_region)
+            self.frac_mask_out = frac_mask_out
         elif kind == 'shape':
             if np.isnan(self.rmax_circ) or (self.rmax_circ <= 0):
                 warnings.warn('[shape_asym] Invalid rmax_circ value.',
@@ -1611,6 +1640,11 @@ class SourceMorphology(object):
                 self.flag = 1
                 return -99.0  # invalid
             ap = photutils.CircularAperture(center, self.rmax_circ)
+            ap_shape_region = ap.to_mask(method='center')
+            ap_shape_region = ap_shape_region.to_image((ny, nx))
+            ap_shape_overlap = np.logical_and(mask_symmetric, ap_shape_region)
+            frac_mask_shape = np.sum(ap_shape_overlap)/np.sum(ap_shape_region)
+            self.frac_mask_shape = frac_mask_shape
         else:
             raise NotImplementedError('Asymmetry kind not understood:', kind)
 
@@ -1628,13 +1662,17 @@ class SourceMorphology(object):
         if kind == 'shape':
             # The shape asymmetry of the background is zero
             asym = ap_abs_diff / ap_abs_sum
+            self.asym_sky_shape = 0
         else:
             if self._sky_asymmetry == -99.0:  # invalid skybox
                 asym = ap_abs_diff / ap_abs_sum
             else:
                 ap_area = _aperture_area(ap, mask_symmetric)
                 asym = (ap_abs_diff - ap_area*self._sky_asymmetry) / ap_abs_sum
-
+                if kind == 'cas':
+                    self.asym_sky_cas = ap_area*self._sky_asymmetry / ap_abs_sum
+                elif kind == 'outer':
+                    self.asym_sky_outer = ap_area*self._sky_asymmetry / ap_abs_sum
         return asym
 
     @lazyproperty
