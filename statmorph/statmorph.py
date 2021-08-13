@@ -1516,6 +1516,9 @@ class SourceMorphology(object):
                 break
             else:
                 counter += 1
+        
+        if counter >= maxiter:
+            raise RuntimeError('Cannot find a good stamp!')
 
         bkg_180 = bkg[::-1, ::-1]
         mask_tot = mask_cut | mask_cut[::-1, ::-1]
