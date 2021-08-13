@@ -16,7 +16,7 @@ import skimage.transform
 import skimage.feature
 import skimage.segmentation
 from astropy.utils import lazyproperty
-from astropy.stats import sigma_clipped_stats
+from astropy.stats import sigma_clipped_stats, mad_std
 from astropy.modeling import models, fitting
 from astropy.utils.exceptions import AstropyUserWarning
 from astropy.convolution import convolve
@@ -1458,6 +1458,99 @@ class SourceMorphology(object):
     ##################
 
     @lazyproperty
+    def _mask_full(self):
+        '''
+        Get the mask of the target and the others.
+        '''
+        mask_targ = self._segmap.data != 0
+
+        if self._mask is None:
+            mask = mask_targ
+        else:
+            mask = mask_targ | self._mask
+        return mask
+
+    def _cutout_random(self):
+        '''
+        Cutout a random image.
+        '''
+        ny, nx = self._image.shape
+        nx_rand_bound = nx - self._skybox_size
+        ny_rand_bound = ny - self._skybox_size
+
+        nx_start = int(np.random.rand() * nx_rand_bound)
+        ny_start = int(np.random.rand() * ny_rand_bound)
+
+        cutslice = (slice(ny_start, ny_start + self._skybox_size),
+                    slice(nx_start, nx_start + self._skybox_size))
+        return cutslice
+
+    def _sky_asymmetry_random(self, mask_fraction_limit=0.1, maxiter=100):
+        '''
+        Asymmetry of the background by a random sampling.
+        
+        Parameters 
+        ----------
+        mask_fraction_limit : float (default: 0.1)
+            Abandon the mask if the fraction of masked pixels is larger than the limit.
+        maxiter : int (default: 100)
+            Quite if reach the maximum iteration.
+        
+        Returns
+        -------
+        a_sky : float
+            The asymmetry of the background.
+        '''
+        mask = self._mask_full
+
+        # Find a proper background sampling.
+        counter = 0
+        while counter < maxiter:
+            cutslice = self._cutout_random()
+            mask_cut = mask[cutslice]
+            mask_fraction = np.sum(mask_cut) / \
+                (mask_cut.shape[0] * mask_cut.shape[1])
+            if mask_fraction < mask_fraction_limit:
+                good_flag = 1
+                bkg = self._image[cutslice]
+                break
+            else:
+                counter += 1
+
+        bkg_180 = bkg[::-1, ::-1]
+        mask_tot = mask_cut | mask_cut[::-1, ::-1]
+        a_sky = np.sum(np.abs(bkg_180 - bkg)[~mask_tot]) / float(bkg.size)
+        return a_sky
+
+    def _sky_asymmetry_sample(self, nsample=50, mask_fraction_limit=0.1, maxiter=100):
+        '''
+        Asymmetry of the background by randomly sampling the background.
+        
+        Parameters 
+        ----------
+        nsample : int (default: 50)
+            The number of sample drawn for the sky asymmetry.
+        mask_fraction_limit : float (default: 0.1)
+            Abandon the mask if the fraction of masked pixels is larger than the limit.
+        maxiter : int (default: 100)
+            Quite if reach the maximum iteration.
+        
+        Returns
+        -------
+        asky_med : float
+            The median of the sampled asymmetry of the background.
+        asky_std : float
+            The std of the sampled asymmetry of the background.
+        '''
+        askyList = []
+        for loop in range(nsample):
+            askyList.append(self._sky_asymmetry_random(mask_fraction_limit, maxiter))
+        
+        asky_med = np.median(askyList)
+        asky_std = mad_std(askyList)
+        return asky_med, asky_std
+
+    @lazyproperty
     def _slice_skybox(self):
         """
         Try to find a region of the sky that only contains background.
@@ -1674,6 +1767,131 @@ class SourceMorphology(object):
                 elif kind == 'outer':
                     self.asym_sky_outer = ap_area*self._sky_asymmetry / ap_abs_sum
         return asym
+    
+    def _asymmetry_function_randsky(self, center, image, kind, nsample=50, 
+                                    mask_fraction_limit=0.1, maxiter=100):
+        """
+        Helper function to determine the asymmetry and center of asymmetry.
+        The idea is to minimize the output of this function.
+        
+        The sky asymmetry is calculated by randomly sampling the background.
+
+        Parameters
+        ----------
+        center : tuple or array-like
+            The (x,y) position of the center.
+        image : array-like
+            The 2D image.
+        kind : {'cas', 'outer', 'shape'}
+            Whether to calculate the traditional CAS asymmetry (default),
+            outer asymmetry or shape asymmetry.
+        nsample : int (default: 50)
+            The number of sample drawn for the sky asymmetry.
+        mask_fraction_limit : float (default: 0.1)
+            Abandon the mask if the fraction of masked pixels is larger than the limit.
+        maxiter : int (default: 100)
+            Quite if reach the maximum iteration.
+
+        Returns
+        -------
+        asym : The asymmetry statistic for the given center.
+        asym_std : The uncertainty of the asymmetry.
+
+        """
+        image = np.float64(image)  # skimage wants double
+        ny, nx = image.shape
+        xc, yc = center
+
+        if xc < 0 or xc >= nx or yc < 0 or yc >= ny:
+            warnings.warn('[asym_center] Minimizer tried to exit bounds.',
+                          AstropyUserWarning)
+            self.flag = 1
+            self._use_centroid = True
+            # Return high value to keep minimizer within range:
+            return 100.0
+
+        # Rotate around given center
+        image_180 = skimage.transform.rotate(image, 180.0, center=center)
+
+        # Apply symmetric mask
+        mask = self._mask_stamp.copy()
+        mask_180 = skimage.transform.rotate(mask, 180.0, center=center)
+        mask_180 = mask_180 >= 0.5  # convert back to bool
+        mask_symmetric = mask | mask_180
+        image = np.where(~mask_symmetric, image, 0.0)
+        image_180 = np.where(~mask_symmetric, image_180, 0.0)
+
+        if image[int(yc), int(xc)] == 0.0:
+            self.flag_maskcenter = 1
+        # Fraction of target pixels been masked
+
+        # Create aperture for the chosen kind of asymmetry
+        if kind == 'cas':
+            r = self._petro_extent_cas * self._rpetro_circ_centroid
+            ap = photutils.CircularAperture(center, r)
+            ap_cas_region = ap.to_mask(method='center')
+            ap_cas_region = ap_cas_region.to_image((ny, nx))
+            ap_cas_overlap = np.logical_and(mask_symmetric, ap_cas_region)
+            frac_mask_cas = np.sum(ap_cas_overlap)/np.sum(ap_cas_region)
+            self.frac_mask_cas = frac_mask_cas
+        elif kind == 'outer':
+            a_in = self.rhalf_ellip
+            a_out = self.rmax_ellip
+            b_out = a_out / self.elongation_asymmetry
+            theta = self.orientation_asymmetry
+            assert (a_in > 0) & (a_out > 0)
+            ap = photutils.EllipticalAnnulus(
+                center, a_in, a_out, b_out, theta=theta)
+            ap_out_region = ap.to_mask(method='center')
+            ap_out_region = ap_out_region.to_image((ny, nx))
+            ap_out_overlap = np.logical_and(mask_symmetric, ap_out_region)
+            frac_mask_out = np.sum(ap_out_overlap)/np.sum(ap_out_region)
+            self.frac_mask_out = frac_mask_out
+        elif kind == 'shape':
+            if np.isnan(self.rmax_circ) or (self.rmax_circ <= 0):
+                warnings.warn('[shape_asym] Invalid rmax_circ value.',
+                              AstropyUserWarning)
+                self.flag = 1
+                return -99.0  # invalid
+            ap = photutils.CircularAperture(center, self.rmax_circ)
+            ap_shape_region = ap.to_mask(method='center')
+            ap_shape_region = ap_shape_region.to_image((ny, nx))
+            ap_shape_overlap = np.logical_and(mask_symmetric, ap_shape_region)
+            frac_mask_shape = np.sum(ap_shape_overlap)/np.sum(ap_shape_region)
+            self.frac_mask_shape = frac_mask_shape
+        else:
+            raise NotImplementedError('Asymmetry kind not understood:', kind)
+
+        # Apply eq. 10 from Lotz et al. (2004)
+        ap_abs_sum = ap.do_photometry(np.abs(image), method='exact')[0][0]
+        ap_abs_diff = ap.do_photometry(
+            np.abs(image_180-image), method='exact')[0][0]
+
+        if ap_abs_sum == 0.0:
+            warnings.warn('[asymmetry_function] Zero flux sum.',
+                          AstropyUserWarning)
+            self.flag = 1
+            return -99.0  # invalid
+
+        asky_med, asky_std = self._sky_asymmetry_sample(nsample, mask_fraction_limit, maxiter)
+        if kind == 'shape':
+            # The shape asymmetry of the background is zero
+            asym = ap_abs_diff / ap_abs_sum
+            self.asym_sky_shape = 0
+        else:
+            if self._sky_asymmetry == -99.0:  # invalid skybox
+                asym = ap_abs_diff / ap_abs_sum
+            else:
+                ap_area = _aperture_area(ap, mask_symmetric)
+                asym = (ap_abs_diff - ap_area*asky_med) / ap_abs_sum
+                asym_std = ap_area*asky_std / ap_abs_sum
+                if kind == 'cas':
+                    self.asky_med_cas = ap_area*asky_med / ap_abs_sum
+                    self.asky_std_cas = ap_area*asky_std / ap_abs_sum
+                elif kind == 'outer':
+                    self.asky_med_outer = ap_area*asky_med / ap_abs_sum
+                    self.asky_std_outer = ap_area*asky_std / ap_abs_sum
+        return asym, asym_std
 
     @lazyproperty
     def _asymmetry_center(self):
@@ -1771,6 +1989,18 @@ class SourceMorphology(object):
                                         image, 'cas')
 
         return asym
+    
+    @lazyproperty
+    def asymmetry_randsky(self):
+        """
+        Calculate asymmetry as described in Lotz et al. (2004).
+        
+        The sky asymmetry is randomly sampled.
+        """
+        image = self._cutout_stamp_maskzeroed
+        asym, asym_std = self._asymmetry_function_randsky(self._asymmetry_center, image, 'cas')
+
+        return asym, asym_std
 
     def _radius_at_fraction_of_total_cas(self, fraction):
         """
@@ -2424,6 +2654,19 @@ class SourceMorphology(object):
         asym = self._asymmetry_function(self._asymmetry_center, image, 'outer')
 
         return asym
+
+    @lazyproperty
+    def outer_asymmetry_randsky(self):
+        """
+        Calculate outer asymmetry as described in Wen et al. (2014).
+        Note that the center is the one used for the standard asymmetry.
+        
+        The sky asymmetry is randomly sampled.
+        """
+        image = self._cutout_stamp_maskzeroed
+        asym, asym_std = self._asymmetry_function_randsky(self._asymmetry_center, image, 'outer')
+
+        return asym, asym_std
 
     @lazyproperty
     def shape_asymmetry(self):
