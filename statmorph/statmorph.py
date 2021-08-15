@@ -1521,8 +1521,8 @@ class SourceMorphology(object):
             raise RuntimeError('Cannot find a good stamp!')
 
         bkg_180 = bkg[::-1, ::-1]
-        mask_tot = mask_cut | mask_cut[::-1, ::-1]
-        a_sky = np.sum(np.abs(bkg_180 - bkg)[~mask_tot]) / float(bkg.size)
+        mask_tot = ~(mask_cut | mask_cut[::-1, ::-1])
+        a_sky = np.sum(np.abs(bkg_180 - bkg)[mask_tot]) / np.sum(mask_tot)
         return a_sky
 
     def _sky_asymmetry_sample(self, nsample=50, mask_fraction_limit=0.1, maxiter=100):
