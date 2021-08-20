@@ -79,6 +79,9 @@ _quantity_names_all = [
     'ymax_stamp',
     'nx_stamp',
     'ny_stamp',
+    'asymmetry_randsky',
+    'outer_asymmetry_randsky', 
+    '_sky_asymmetry_sample',
 ]
 
 _quantity_names_nofit = [
@@ -125,6 +128,9 @@ _quantity_names_nofit = [
     'ymax_stamp',
     'nx_stamp',
     'ny_stamp',
+    'asymmetry_randsky',
+    'outer_asymmetry_randsky', 
+    '_sky_asymmetry_sample',
 ]
 
 
@@ -1506,16 +1512,16 @@ class SourceMorphology(object):
         # Find a proper background sampling.
         counter = 0
         while counter < maxiter:
+            counter += 1
             cutslice = self._cutout_random()
             mask_cut = mask[cutslice]
             mask_fraction = np.sum(mask_cut) / \
                 (mask_cut.shape[0] * mask_cut.shape[1])
+            bkg = self._image[cutslice]
+            if np.isnan(bkg).any():
+                continue
             if mask_fraction < mask_fraction_limit:
-                good_flag = 1
-                bkg = self._image[cutslice]
                 break
-            else:
-                counter += 1
         
         if counter >= maxiter:
             raise RuntimeError('Cannot find a good stamp!')
@@ -1525,14 +1531,19 @@ class SourceMorphology(object):
         a_sky = np.sum(np.abs(bkg_180 - bkg)[mask_tot]) / np.sum(mask_tot)
         return a_sky
 
-    def _sky_asymmetry_sample(self, nsample=50, mask_fraction_limit=0.1, maxiter=100):
+    def _sky_asymmetry_sample_function(self, nsample=100, quantile=0.15, mask_fraction_limit=0.1, maxiter=100):
         '''
         Asymmetry of the background by randomly sampling the background.
+        We follow Shi et al. (2009) to calculate the sky asymmetry.
         
         Parameters 
         ----------
         nsample : int (default: 50)
             The number of sample drawn for the sky asymmetry.
+        quantile : float (default: 0.15)
+            The quantile of the sampled sky asymmetry as the sky measurement.  
+            Following Shi et al., we use the low-end tail 15% of the distribution 
+            as the sky asymmetry.
         mask_fraction_limit : float (default: 0.1)
             Abandon the mask if the fraction of masked pixels is larger than the limit.
         maxiter : int (default: 100)
@@ -1549,9 +1560,24 @@ class SourceMorphology(object):
         for loop in range(nsample):
             askyList.append(self._sky_asymmetry_random(mask_fraction_limit, maxiter))
         
-        asky_med = np.median(askyList)
+        asky = np.quantile(askyList, q=quantile)
         asky_std = mad_std(askyList)
-        return asky_med, asky_std
+        return asky, asky_std
+    
+    @lazyproperty
+    def _sky_asymmetry_sample(self):
+        '''
+        Sky asymmetry calculated based on randomly sample the background.
+        
+        Default parameters: 
+            nsample=50, quantile=0.15, mask_fraction_limit=0.1, maxiter=100
+        '''
+        try:
+            asky, asky_std = self._sky_asymmetry_sample_function()
+        except:
+            return -99
+        
+        return asky, asky_std
 
     @lazyproperty
     def _slice_skybox(self):
@@ -1771,13 +1797,15 @@ class SourceMorphology(object):
                     self.asym_sky_outer = ap_area*self._sky_asymmetry / ap_abs_sum
         return asym
     
-    def _asymmetry_function_randsky(self, center, image, kind, nsample=50, 
-                                    mask_fraction_limit=0.1, maxiter=100):
+    def _asymmetry_function_randsky(self, center, image, kind):
         """
         Helper function to determine the asymmetry and center of asymmetry.
         The idea is to minimize the output of this function.
         
-        The sky asymmetry is calculated by randomly sampling the background.
+        The sky asymmetry is calculated by randomly sampling the background. 
+        Following Shi et al., we use the low-end tail 15% of the distribution 
+        as the sky asymmetry and 2 times of the sky asymmetry STD as the 
+        uncertainty of the asymmetry parameters.
 
         Parameters
         ----------
@@ -1876,24 +1904,25 @@ class SourceMorphology(object):
             self.flag = 1
             return -99.0  # invalid
 
-        asky_med, asky_std = self._sky_asymmetry_sample(nsample, mask_fraction_limit, maxiter)
         if kind == 'shape':
             # The shape asymmetry of the background is zero
             asym = ap_abs_diff / ap_abs_sum
             self.asym_sky_shape = 0
         else:
-            if self._sky_asymmetry == -99.0:  # invalid skybox
-                asym = ap_abs_diff / ap_abs_sum
+            if self._sky_asymmetry_sample == -99.0:  # invalid skybox
+                asym = np.nan 
+                asym_std = np.nan 
             else:
+                asky, asky_std = self._sky_asymmetry_sample
                 ap_area = _aperture_area(ap, mask_symmetric)
-                asym = (ap_abs_diff - ap_area*asky_med) / ap_abs_sum
-                asym_std = ap_area*asky_std / ap_abs_sum
+                asym = (ap_abs_diff - ap_area*asky) / ap_abs_sum
+                asym_std = 2 * ap_area*asky_std / ap_abs_sum
                 if kind == 'cas':
-                    self.asky_med_cas = ap_area*asky_med / ap_abs_sum
-                    self.asky_std_cas = ap_area*asky_std / ap_abs_sum
+                    self.asky_med_cas = ap_area*asky / ap_abs_sum
+                    self.asky_std_cas = 2 * ap_area*asky_std / ap_abs_sum
                 elif kind == 'outer':
-                    self.asky_med_outer = ap_area*asky_med / ap_abs_sum
-                    self.asky_std_outer = ap_area*asky_std / ap_abs_sum
+                    self.asky_med_outer = ap_area*asky / ap_abs_sum
+                    self.asky_std_outer = 2 * ap_area*asky_std / ap_abs_sum
         return asym, asym_std
 
     @lazyproperty
