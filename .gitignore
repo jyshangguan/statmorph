@@ -25,3 +25,5 @@ statmorph.egg-info/*
 *.sh
 notebooks/.ipynb_checkpoints/*
 .DS_Store
+
+bak_*

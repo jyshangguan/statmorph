@@ -82,6 +82,7 @@ _quantity_names_all = [
     'asymmetry_randsky',
     'outer_asymmetry_randsky', 
     '_sky_asymmetry_sample',
+    'distance_center_asymmetry',
 ]
 
 _quantity_names_nofit = [
@@ -131,6 +132,7 @@ _quantity_names_nofit = [
     'asymmetry_randsky',
     'outer_asymmetry_randsky', 
     '_sky_asymmetry_sample',
+    'distance_center_asymmetry',
 ]
 
 
@@ -1966,6 +1968,16 @@ class SourceMorphology(object):
         relative to the original image.
         """
         return self.ymin_stamp + self._asymmetry_center[1]
+
+    @lazyproperty
+    def distance_center_asymmetry(self):
+        '''
+        Calculate the distance in pixel between the center of the asymmetry and the 
+        center of the image.
+        '''
+        ny, nx = self._image.shape
+        dist = np.sqrt((self.yc_asymmetry - (ny // 2))**2 + (self.xc_asymmetry - (nx // 2))**2)
+        return dist
 
     @lazyproperty
     def _covariance_asymmetry(self):
